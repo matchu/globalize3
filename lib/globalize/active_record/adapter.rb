@@ -41,16 +41,36 @@ module Globalize
       end
 
       def save_translations!
-        existing_translations_by_locale = {}
-        record.translations.each do |t|
-          existing_translations_by_locale[t.locale.to_s] = t
+        # If the translations are already loaded, organize them by ID for fast
+        # retrieval later.
+        if record.translations.loaded?
+          loaded_translations_by_locale = {}
+          record.translations.each do |t|
+            loaded_translations_by_locale[t.locale.to_s] = t
+          end
         end
         
         stash.each do |locale, attrs|
           if attrs.any?
-            locale_str = locale.to_s
-            translation = existing_translations_by_locale[locale_str] ||
-              record.translations.find_or_initialize_by_locale(locale_str)
+            locale = locale.to_s
+            
+            if record.translations.loaded?
+              # Since the translations are already loaded, then we can avoid
+              # SELECT queries entirely: if the translation for this locale
+              # already exists, it's in the hash, so use that record - or, if
+              # it doesn't exist yet, build the new record and it'll be
+              # automatically added to the translations relation.
+              translation = loaded_translations_by_locale[locale] ||
+                record.translations.build(:locale => locale)
+            else
+              # The translations aren't already loaded so we're stuck with
+              # loading them one-by-one. This isn't really so bad if we're only
+              # updating one translation, but, if this query gets called
+              # multiple times, that's a hint that you should probably be
+              # preloading them. (But maybe you don't want to if you're only
+              # updating, say, 3 out of 1000 translations. Whatever.)
+              translation = record.translations.find_or_initialize_by_locale(locale)
+            end
             attrs.each { |name, value| translation[name] = value }
             translation.save!
           end
